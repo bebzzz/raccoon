@@ -1,0 +1,154 @@
+---
+- hosts: bebych
+  vars: 
+   mysql_root_pass: somepassword
+  tasks:
+
+  - name: Install packages
+    package: 
+     name: "{{ item }}"
+     state: present
+    with_items:
+    - nginx
+    - python-pip
+    - supervisor
+    - libmysqlclient-dev
+    - expect
+
+  - name: Install MySQL
+    apt: package={{ item }} state=installed force=yes update_cache=yes
+    with_items:
+    - mysql-server
+    - mysql-client
+    - python-mysqldb
+
+  - name: Copy the root credentials as .my.cnf file
+    template: src=../templates/root.cnf.j2 dest=/root/.my.cnf mode=0600
+
+  - name: Remove the MySQL test database
+    action: mysql_db db=test state=absent
+
+  - name: Create databases
+    mysql_db: name='djangodb' state=present collation=utf8_general_ci encoding=utf8
+ 
+  - name: Add deploy DB user and allow access to news_* databases
+    mysql_user: name=root password={{ mysql_root_pass }} host="%" priv=djangodb.*:ALL,GRANT state=present
+
+  - name: Set root password
+    mysql_user: name=root password={{ mysql_root_pass }} host="{{item}}" priv=*.*:ALL,GRANT state=present
+    with_items:
+      - "{{ansible_hostname}}"
+      - 127.0.0.1
+      - ::1
+      - localhost
+
+
+  - name: Restart MySQL
+    service: name=mysql state=restarted
+
+
+  - name: Upgrade pip    
+    command: pip install --upgrade pip
+
+
+  - name: Install Python Packages 
+    pip:
+      name: virtualenv
+
+  - name: Install DjangoCMS
+    pip:
+     name: "{{ item }}"
+     state: present
+     virtualenv: /root/venvs/env
+    with_items:
+    - certifi
+    - pyopenssl
+    - ndg-httpsclient
+    - pyasn1
+    - djangocms-installer
+    - uwsgi      
+    - django
+    - gunicorn
+    - mysqlclient    
+
+  - name: Creating Django project
+    file:
+     path: /root/venvs/env/newproject
+     state: directory
+     mode: 0755 
+
+  - name: Sending scripts
+    file:
+     path: /root/venvs/env/scripts
+     state: directory
+     mode: 0755
+
+  - name: Unpacking CMS files
+    script: ../scripts/virtualenv.sh
+
+  - name: Sending Settings.py config
+    template:
+     src: ../templates/settings.py.j2
+     dest: /root/venvs/env/newproject/mysite/settings.py
+     owner: root
+     group: root
+     mode: 0611
+
+  - name: Migrating database and creating superuser
+    script: ../scripts/migration.sh
+
+
+  - name: Configuring supervisor (running cms)
+    template:
+     src: ../templates/supervisor.conf.j2
+     dest: /etc/supervisor/conf.d/supervisor.conf
+     owner: root
+     group: root
+     mode: 0644
+ 
+  - name: Configuring supervisor (gunicorn)
+    template:
+     src: ../templates/gunicorn.conf.j2
+     dest: /etc/supervisor/conf.d/gunicorn.conf
+     owner: root
+     group: root
+     mode: 0644
+
+
+  - name: Configuring nginx
+    template:
+     src: ../templates/nginx.conf.j2
+     dest: /etc/nginx/sites-available/default
+     owner: root
+     group: root
+     mode: 0644 
+
+  - name: Copying run script
+    template:
+     src: ../scripts/runcms.sh
+     dest: /root/venvs/env/scripts/runcms.sh
+     owner: root
+     group: root
+     mode: 0755
+
+  - name: Copying gunicorn script
+    template:
+     src: ../templates/gunicorn.sh.j2
+     dest: /root/venvs/env/scripts/gunicorn.sh
+     owner: root
+     group: root
+     mode: 0755
+
+
+  - name: Restarting supervisor
+    service:
+     name: supervisor
+     state: restarted
+
+  - name: Restarting nginx
+    service:
+     name: nginx
+     state: restarted
+
+
+

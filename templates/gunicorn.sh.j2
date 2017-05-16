@@ -1,0 +1,6 @@
+#!/bin/bash
+
+source /root/venvs/env/bin/activate
+cd /root/venvs/env/newproject
+gunicorn mysite.wsgi:application --bind {{ inventory_hostname }}:8000
+
